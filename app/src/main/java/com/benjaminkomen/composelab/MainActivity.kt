@@ -14,6 +14,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -58,7 +59,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -256,12 +262,54 @@ fun TodoItemRow(
                 } else null
             )
 
+            // Threshold markers at every 10% — visible behind the sliding item
+            ThresholdMarkers(
+                containerWidth = containerWidth,
+                modifier = Modifier.matchParentSize()
+            )
+
             // Background: delete pill revealed as item slides left.
             // Uses matchParentSize so it doesn't affect the Box's own size.
             DeleteBackground(
                 offsetPx = offsetX.value,
                 modifier = Modifier.matchParentSize()
             )
+        }
+    }
+}
+
+@Composable
+fun ThresholdMarkers(containerWidth: Int, modifier: Modifier = Modifier) {
+    val textMeasurer = rememberTextMeasurer()
+    val markerColor = Color.LightGray
+    val highlightColor = Color(0xFFFF9800) // orange for 80%
+
+    Canvas(modifier = modifier) {
+        if (containerWidth <= 0) return@Canvas
+
+        for (pct in 1..9) {
+            val x = containerWidth * (1f - pct / 10f) // markers from right edge
+            val isThreshold = pct == 8 // 80% marker
+            val color = if (isThreshold) highlightColor else markerColor
+            val strokeWidth = if (isThreshold) 3f else 1.5f
+            val lineHeight = if (isThreshold) size.height else size.height * 0.4f
+            val yStart = (size.height - lineHeight) / 2f
+
+            drawLine(
+                color = color,
+                start = Offset(x, yStart),
+                end = Offset(x, yStart + lineHeight),
+                strokeWidth = strokeWidth,
+            )
+
+            // Label at 80%
+            if (isThreshold) {
+                val label = textMeasurer.measure(
+                    "80%",
+                    style = TextStyle(fontSize = 9.sp, color = highlightColor)
+                )
+                drawText(label, topLeft = Offset(x - label.size.width / 2f, 2f))
+            }
         }
     }
 }
