@@ -2,6 +2,8 @@
 
 A minimal Android project that tests swipe-to-delete in Jetpack Compose and provides a working solution for the broken `positionalThreshold` in Material 3's `SwipeToDismissBox`.
 
+https://github.com/user-attachments/assets/19f5b1f0-e8e8-4981-88b1-d7be4811cdec
+
 ## The problem
 
 Material 3's `SwipeToDismissBox` has a [known bug](https://issuetracker.google.com/issues/471021165) (status: "Not started") in versions >= 1.4.0:
