@@ -6,19 +6,25 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -36,28 +42,31 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.benjaminkomen.composelab.ui.theme.ComposeLabTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     private val viewModel: TodoViewModel by viewModels()
@@ -149,7 +158,6 @@ fun TodoList(viewModel: TodoViewModel) {
             itemsIndexed(items = viewModel.todos, key = { _, item -> item.id }) { index, item ->
                 TodoItemRow(
                     item = item,
-                    onToggleImportant = { viewModel.toggleImportant(item) },
                     onRemove = { viewModel.removeTodo(item) }
                 )
                 if (index < viewModel.todos.size - 1) {
@@ -161,27 +169,24 @@ fun TodoList(viewModel: TodoViewModel) {
     }
 }
 
+/**
+ * Custom swipe-to-delete using detectHorizontalDragGestures + Animatable.
+ *
+ * We bypass SwipeToDismissBox entirely because positionalThreshold is broken
+ * in Material 3 >= 1.4.0 (https://issuetracker.google.com/issues/471021165).
+ * This approach gives us full control over the dismiss threshold.
+ */
 @Composable
 fun TodoItemRow(
     item: TodoItem,
-    onToggleImportant: (TodoItem) -> Unit,
     onRemove: (TodoItem) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var isRemoved by remember { mutableStateOf(false) }
+    var containerWidth by remember { mutableIntStateOf(0) }
     val animationDuration = 500
-
-    val swipeToDismissBoxState = rememberSwipeToDismissBoxState(
-        positionalThreshold = { totalDistance -> totalDistance * 0.8f },
-        confirmValueChange = { value ->
-            if (value == SwipeToDismissBoxValue.EndToStart) {
-                isRemoved = true
-                true
-            } else {
-                false
-            }
-        }
-    )
+    val scope = rememberCoroutineScope()
+    val offsetX = remember { Animatable(0f) }
 
     LaunchedEffect(isRemoved) {
         if (isRemoved) {
@@ -197,17 +202,49 @@ fun TodoItemRow(
             shrinkTowards = Alignment.Top
         ) + fadeOut()
     ) {
-        SwipeToDismissBox(
-            state = swipeToDismissBoxState,
-            modifier = modifier,
-            enableDismissFromStartToEnd = false,
-            backgroundContent = {
-                DeleteBackground(swipeToDismissBoxState = swipeToDismissBoxState)
-            }
+        Box(
+            modifier = modifier
+                .onSizeChanged { containerWidth = it.width }
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            if (containerWidth > 0 && abs(offsetX.value) >= containerWidth * 0.8f) {
+                                // Past 80% threshold — animate off-screen, then remove
+                                scope.launch {
+                                    offsetX.animateTo(
+                                        -containerWidth.toFloat(),
+                                        animationSpec = tween(200)
+                                    )
+                                    isRemoved = true
+                                }
+                            } else {
+                                // Not far enough — spring back
+                                scope.launch {
+                                    offsetX.animateTo(
+                                        0f,
+                                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                                    )
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            scope.launch { offsetX.animateTo(0f, spring()) }
+                        },
+                    ) { change, dragAmount ->
+                        change.consume()
+                        // Only allow dragging left (negative offset)
+                        val newValue = (offsetX.value + dragAmount).coerceAtMost(0f)
+                        scope.launch { offsetX.snapTo(newValue) }
+                    }
+                }
         ) {
+            // Foreground: the actual list item, sliding with the drag.
+            // Listed first so it determines the Box height.
             ListItem(
                 headlineContent = { Text(item.text) },
-                modifier = Modifier.background(Color(0xFFF5F5F5)),
+                modifier = Modifier
+                    .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                    .background(Color(0xFFF5F5F5)),
                 leadingContent = if (item.isImportant) {
                     {
                         Icon(
@@ -218,34 +255,33 @@ fun TodoItemRow(
                     }
                 } else null
             )
+
+            // Background: delete pill revealed as item slides left.
+            // Uses matchParentSize so it doesn't affect the Box's own size.
+            DeleteBackground(
+                offsetPx = offsetX.value,
+                modifier = Modifier.matchParentSize()
+            )
         }
     }
 }
 
 @Composable
-fun DeleteBackground(
-    swipeToDismissBoxState: androidx.compose.material3.SwipeToDismissBoxState
-) {
-    val offset = try {
-        swipeToDismissBoxState.requireOffset()
-    } catch (_: IllegalStateException) {
-        0f
-    }
-    // offset is negative when swiping left
-    val absOffsetDp: Dp = with(LocalDensity.current) { abs(offset).toDp() }
-    val pillHeight = 40.dp
-    // Grows from 0 → circle (when width = height) → wider pill
-    val pillWidth: Dp = (absOffsetDp * 0.5f).coerceIn(0.dp, 120.dp)
+fun DeleteBackground(offsetPx: Float, modifier: Modifier = Modifier) {
+    // offsetPx is negative when swiping left
+    val absOffsetDp: Dp = with(LocalDensity.current) { abs(offsetPx).toDp() }
+    // Subtract horizontal padding so the pill fits within the revealed area
+    val pillWidth: Dp = (absOffsetDp - 24.dp).coerceAtLeast(0.dp)
 
     if (absOffsetDp > 4.dp) {
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = modifier,
             contentAlignment = Alignment.CenterEnd
         ) {
             Box(
                 modifier = Modifier
-                    .padding(end = 12.dp)
-                    .height(pillHeight)
+                    .padding(horizontal = 12.dp)
+                    .height(40.dp)
                     .width(pillWidth)
                     .background(
                         color = Color.Red,
