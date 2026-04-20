@@ -1,27 +1,45 @@
-# ComposeLab
+# JetpackCompose-SwipeToDelete
 
-A playground for learning Jetpack Compose and Material 3 on Android by building a TODO app.
+A minimal Android project that tests swipe-to-delete in Jetpack Compose and provides a working solution for the broken `positionalThreshold` in Material 3's `SwipeToDismissBox`.
 
-## What this demonstrates
+## The problem
 
-### Compose fundamentals
-- `@Composable` functions, `remember`, `mutableStateOf`, `Modifier` chains
-- Material 3 theming with `MaterialTheme`, `Scaffold`, `ListItem`
-- `LazyColumn` with `itemsIndexed` and `key` for efficient list rendering
-- `ViewModel` with `mutableStateListOf` for observable state management
-- `OutlinedTextField` with trailing icon for text input
-- Keyboard dismissal via `detectTapGestures` + `LocalFocusManager`
+Material 3's `SwipeToDismissBox` has a [known bug](https://issuetracker.google.com/issues/471021165) (status: "Not started") in versions >= 1.4.0:
 
-### Custom swipe-to-delete gesture
-Material 3's `SwipeToDismissBox` has a [known bug](https://issuetracker.google.com/issues/471021165) in versions >= 1.4.0 where `positionalThreshold` is ignored and `confirmValueChange` may not be called reliably. This project works around the bug by implementing swipe-to-delete from scratch using:
+- **`positionalThreshold` is ignored** — the parameter exists but is never forwarded to the underlying `AnchoredDraggableState`'s fling behavior
+- **`confirmValueChange` may not be called** — the state can transition during the drag itself, bypassing the callback entirely
+- **`progress` only updates after 50%** — making it unusable for driving animations from the start of a swipe
 
-- `detectHorizontalDragGestures` for the swipe gesture (full control over thresholds)
-- `Animatable` for smooth offset tracking and spring bounce-back
-- `AnimatedVisibility` with `shrinkVertically` + `fadeOut` for removal animation
-- Custom 80% positional threshold — items only delete when dragged past 80% of width
-- Growing red pill delete indicator using `RoundedCornerShape(50)`
+This means you cannot reliably control how far users need to swipe before an item is dismissed. Items get deleted after swiping just ~25-50% of the way.
 
-Real-world apps like [EhViewer](https://github.com/FooIbar/EhViewer) and [Firefox Android](https://github.com/mozilla-firefox/firefox) use similar workarounds.
+## The solution
+
+This project bypasses `SwipeToDismissBox` entirely and implements swipe-to-delete from scratch using lower-level Compose APIs:
+
+- **`detectHorizontalDragGestures`** — handles the swipe gesture with full control over thresholds
+- **`Animatable`** — tracks the drag offset and provides spring bounce-back animation
+- **`AnimatedVisibility`** with `shrinkVertically` + `fadeOut` — smooth removal animation when an item is deleted
+- **Configurable positional threshold** — set to 80% by default, trivially changeable to any value
+- **Growing red pill indicator** — a `RoundedCornerShape(50)` delete indicator that grows 1:1 with the swipe distance
+- **Visual threshold markers** — `Canvas`-drawn lines at every 10% interval with the active threshold highlighted in orange
+
+The threshold check happens at finger-up time in `onDragEnd`, giving precise control:
+
+```kotlin
+onDragEnd = {
+    if (containerWidth > 0 && abs(offsetX.value) >= containerWidth * 0.8f) {
+        // Past threshold — animate off-screen, then remove
+    } else {
+        // Not far enough — spring back
+    }
+}
+```
+
+## Prior art
+
+Real-world apps that work around the same bug:
+- [EhViewer](https://github.com/FooIbar/EhViewer) — forks `SwipeToDismissBox` using foundation-level `AnchoredDraggableState` with explicit threshold passing via `AnchoredDraggableDefaults.flingBehavior()`
+- [Firefox Android](https://github.com/mozilla-firefox/firefox) — full custom implementation using raw `pointerInput` gesture APIs
 
 ## Running
 
